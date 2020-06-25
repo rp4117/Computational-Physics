@@ -1,0 +1,288 @@
+from Project_functions import P, lambd, NLL, para_min, check_global, std, Univar, \
+grad_meth, MonteCarlo, QuasiNewton, second_derivs
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import time
+# Read in data
+df = pd.read_csv('data.csv')
+Data=list(df['One'])
+sim_rates=list(df['Two'])
+# Define energy bins
+E=np.arange(0.025,10.025,0.05)
+# Plot measured event rate as a histogram
+plt.figure()
+plt.bar(E,Data,width=0.05)
+plt.xlabel("Multiple of 0.05 GeV")
+plt.ylabel(r"Number of oberved events")
+plt.title("Variation of number of interation events with energy")
+#%%
+# Plot the survival probability over all energy bins
+plt.figure()
+plt.plot(E,P())
+plt.title(r"Variation of $P(\nu_{\mu}\rightarrow\nu_{\mu})$")
+plt.ylabel(r"$P(\nu_{\mu}\rightarrow\nu_{\mu})$")
+plt.xlabel("Energy / GeV")
+
+#%%
+# Plot the measured and predicted rates to compare
+plt.figure()
+plt.plot(E,lambd(),color='k', label="Fit from simulated data")
+plt.bar(E,Data,width=0.05,label="Measured data", alpha=0.4,color='black')
+plt.xlabel("Multiple of 0.05 GeV")
+plt.ylabel("Number of oberved events")
+plt.title("Comparison of optimum predicted \n and measured event rates")
+plt.legend()
+
+#%%
+# Define theta and  delta m ranges to plot
+theta=np.linspace(0,np.pi,1000)
+delta_m=np.linspace(0,0.01,1000)
+# Plot NLL over theta and delta m in turn with the other dimension as default
+plt.figure()
+plt.plot(theta,[NLL(theta_23=theta[i]) for i in range(len(theta))])
+plt.xlabel(r"$\theta_{23}$")
+plt.ylabel("NLL")
+plt.title(r"Variation of NLL with $\theta_{23}$")
+
+plt.figure()
+plt.plot(delta_m,[NLL(m_23=delta_m[i]) for i in range(len(delta_m))])
+plt.xlabel(r"$\Delta m_{23}^{2}$")
+plt.ylabel("NLL")
+plt.title(r"Variation of NLL with $\Delta m_{23}^{2}$")
+#%%
+# Test the minimiser on survival probability
+# Define the small range to search over
+E_search=np.linspace(0.4,0.8,1000)
+def P_En(x):
+    return P(E=x)
+p_para=para_min(P_En,E_search,0.01)
+plt.figure()
+plt.plot(E,P_En(E))
+plt.plot(p_para[1],p_para[0],'ko')
+plt.title(r"Variation of $P(\nu_{\mu}\rightarrow\nu_{\mu})$")
+plt.ylabel(r"$P(\nu_{\mu}\rightarrow\nu_{\mu})$")
+plt.xlabel("Energy / GeV")
+#%%
+# Reduce NLL to take as inputs only one dimension (theta and m in turn)
+def NLL_thet(x):
+    return NLL(theta_23=x)
+def NLL_m(x):
+    return NLL(m_23=x)
+# Define theta and delta m ranges to explore
+thet=np.linspace(.5,.7,100)
+delta_m=np.linspace(0.0027, .0028,100)
+# Run the global check
+print('Global theta min:',check_global(NLL_thet,thet,1e-10))
+print('Global del_m min:',check_global(NLL_m,delta_m,1e-10))
+# Find optimum theta and delta m and times taken
+start_time=time.time()
+# Run the parabolic minimiser with an accuracy of 1e-10
+thet_min=para_min(NLL_thet,thet,1e-10)
+print('Time for theta min:',time.time()-start_time)
+start_time=time.time()
+m_min=para_min(NLL_m,delta_m,1e-10)
+print('Time for del_m min:',time.time()-start_time)
+# Print the resulyts and standard deviations from the parabolic fit
+print('NLL at min_m:',m_min[0],'\n','Optimum m:',m_min[1],'\n',
+      'm std:', m_min[-1], '\n',
+      'NLL at min_theta:',thet_min[0],'\n','Optimum theta:',thet_min[1],'\n',
+      'theta std:', thet_min[-1])
+# Plot NLL in theta and the corresponding parabolic fit
+plt.figure()
+plt.plot(thet,[NLL_thet(thet[i]) for i in range(len(thet))],label='NLL')
+plt.plot(thet_min[1],thet_min[0],'ko')
+f=para_min(NLL_thet,thet,0.01)[2]
+plt.plot(thet,[f(thet[i]) for i in range(len(thet))],label='Parabolic fit')
+plt.xlabel(r"$\theta_{23}$")
+plt.ylabel("NLL")
+plt.title(r"Variation of NLL with $\theta_{23}$")
+plt.legend()
+# Plot NLL in delta m and the corresponding parabolic fit
+plt.figure()
+plt.plot(delta_m,[NLL_m(delta_m[i]) for i in range(len(delta_m))],label='NLL')
+plt.plot(m_min[1],m_min[0],'ko')
+f=para_min(NLL_m,delta_m,1e-10)[2]
+plt.plot(delta_m,[f(delta_m[i]) for i in range(len(delta_m))],label='Parabolic fit')
+plt.xlabel(r"$\Delta m_{23}^{2}$")
+plt.ylabel("NLL")
+plt.title(r"Variation of NLL with $\Delta m_{23}^{2}$")
+plt.legend()
+#%%
+# Plot NLL and parabolic fit over theta
+thet=np.linspace(0.6,0.7,100)
+plt.figure()
+plt.plot(thet,[NLL_thet(thet[i]) for i in range(len(thet))],label='NLL')
+thet_min=para_min(NLL_thet,thet,0.00001)
+thet_min_fit=thet_min[2]
+plt.plot(thet,thet_min_fit(thet),label='Parabolic fit')
+# Find the standard deviation of theta from both the fit AND interpolation
+NL_std_thet=std(NLL_thet,thet_min[1],thet)
+print('theta std from function:',NL_std_thet[1],'and',NL_std_thet[2],'\n',
+      'theta std from fit:',thet_min[3])
+# Plot the standard deviation points in this dimension
+plt.plot(NL_std_thet[0][0],NLL_thet(NL_std_thet[0][0]),
+         'ko',color='r',label='Minimum+0.5')
+plt.plot(NL_std_thet[0][1],NLL_thet(NL_std_thet[0][1]),'ko',color='r')
+plt.plot(thet_min[1],thet_min[0],'ko',label='Minimum')
+plt.xlabel(r"$\theta_{23}$")
+plt.ylabel("NLL")
+plt.title(r"Standard deviation of $\theta_{23}$")
+plt.legend()
+#%%
+# Plot NLL and parabolic fit over theta
+plt.figure()
+delta_m=np.linspace(0.0024,0.003,100)
+plt.plot(delta_m,[NLL_m(delta_m[i]) for i in range(len(delta_m))],label='NLL')
+m_min=para_min(NLL_m,delta_m,0.0000001)
+m_min_fit=m_min[2]
+plt.plot(delta_m,m_min_fit(delta_m),label='Parabolic fit')
+# Find the standard deviation of delta m from both the fit AND interpolation
+NL_std_m=std(NLL_m,m_min[1],delta_m)
+print('delta m std from function:',NL_std_m[1],'and',NL_std_m[2],'\n',
+      'delta m std from parabolic fit:',m_min[3])
+# Plot the standard deviation points in this dimension
+plt.plot(NL_std_m[0][0],NLL_m(NL_std_m[0][0]),'ko',color='r',label='Minimum+0.5')
+plt.plot(NL_std_m[0][1],NLL_m(NL_std_m[0][1]),'ko',color='r')
+plt.plot(m_min[1],m_min[0],'ko')
+plt.xlabel(r"$\Delta m_{23}^{2}$")
+plt.ylabel("NLL")
+plt.title(r"Standard deviation of $\Delta m_{23}^{2}$")
+plt.legend()
+#%% 
+# Run univariate on NLL reduced to two dimensions (del_m andt theta)
+def NLL_thet_m(thet,m):
+    return NLL(theta_23=thet,m_23=m)
+# Perform the Univariate method over the same ranges
+start_time=time.time()
+U=Univar(NLL_thet_m,thet,delta_m,1e-5)
+# Print time taken and results
+print('Time taken:',time.time()-start_time)
+print('Optimum theta:',U[0],'\n','Optimum m:', U[1],'\n', 'NLL min:','\n', U[2],
+      '\n','Theta error:','\n', U[3],'\n', 'Delta m error:', U[4])
+#%%
+# Plot NLL and minimum as image along with minimum found
+ax=plt.figure()
+thet = np.linspace(0.00001, np.pi, 100)
+del_m = np.linspace(0.001, .01, 100)
+z=[]
+for i in del_m:
+    z_thet=[]
+    for j in thet:
+        z_thet.append(NLL_thet_m(j,i))
+    z.append(z_thet)
+z=np.array(z)
+thet,del_m = np.meshgrid(thet,del_m)
+plt.imshow(z,extent=[0.00001, np.pi,0.001, .01],
+           interpolation='None',origin='lower',aspect='auto')
+plt.plot(U[0], U[1],'ko',color='red', markersize=4,label='Minimum')
+plt.xlabel(r"$\theta_{23}$")
+plt.ylabel(r"$\Delta m_{23}^{2}$")
+plt.title(r"Variation of NLL with $\Delta m_{23}^{2}$ and $\theta_{23}$")
+bar=plt.colorbar()
+bar.set_label("NLL")
+plt.legend()
+plt.show()
+#%%
+# Perform gradient method in theta and delta m
+start_time=time.time()
+GM=grad_meth(NLL_thet_m, [0.702, 0.0032], 1e-5, 0.0000001)
+print('Gradient Method:')
+print('Minimum NLL:',GM[0],'\n','Optimum theta:',GM[1][0],'\n',
+      'Optimum m',GM[1][1])
+# Print the time taken
+print('Gradient method time=', time.time()-start_time)
+#%%
+# Perform simulated annealing on NLL in theta and delta m (2D)
+start_time=time.time()
+thet=np.linspace(.5,.7,100)
+del_m=np.linspace(0.0027, .0028,100)
+MC=MonteCarlo(NLL_thet_m, [thet, del_m], 100, 10, 0.01)
+print('Minimum NLL:',MC[1],'\n','Optimum theta:',MC[0][0],'\n',
+      'Optimum m',MC[0][1])
+print('MonteCarlo time=', time.time()-start_time)
+#%%
+# Define 3D NLL
+def NLL_thet_m_dc_dE(thet,m,dc_dE):
+    return NLL(theta_23=thet,m_23=m,dcs_dE=dc_dE)
+#%%
+# Perform gradient method on 3D NLL
+start_time=time.time()
+# Start the algorithm close to the minimum, these values are found 
+# through trials
+GM=grad_meth(NLL_thet_m_dc_dE,[0.7, 3.0e-3, 1.4], 1e-10, 0.000000001)
+print('Min NLL from gradient method:', GM[0],'at', GM[1])
+print('Gradient method time=', time.time()-start_time)
+#%%
+# Perform simulated annealing on 3D NLL
+start_time=time.time()
+# Define the ranges to search over
+# k is dcs_dE
+thet = np.linspace(0.6, 0.7, 1000)
+del_m = np.linspace(2.7e-3, 3.4e-3, 1000)
+k = np.linspace(1.2, 1.9, 1000)
+MC=MonteCarlo(NLL_thet_m_dc_dE, [thet, del_m, k], 100, 10, .1)
+print('Minimum NLL:',MC[1],'\n','Optimum theta:',MC[0][0],
+      '\n','Optimum m',MC[0][1],
+      '\n', 'Optimum dcs_dE', MC[0][2])
+print('MonteCarlo time=', time.time()-start_time)
+#%%
+# Reduce the NLL to the three dimensions to search in
+def NLL_thet(x):
+    return NLL(theta_23=x,m_23=MC[0][1],dcs_dE=MC[0][2])
+def NLL_m(x):
+    return NLL(theta_23=MC[0][0],m_23=x,dcs_dE=MC[0][2])
+def NLL_dcs_dE(x):
+    return NLL(theta_23=MC[0][0],m_23=MC[0][1],dcs_dE=x)
+# Find the standard deviations of these results using the std function above
+print("Theta error:",std(NLL_thet,MC[0][0],thet)[1],'\n',
+      'and',std(NLL_thet,MC[0][0],thet)[2])
+print("Del_m error:",std(NLL_m,MC[0][1],del_m)[1],'\n',
+      'and',std(NLL_m,MC[0][1],thet)[2])
+print("dcs_dE error:",std(NLL_dcs_dE,MC[0][2],k)[1],'\n',
+      'and',std(NLL_dcs_dE,MC[0][2],thet)[2])
+#%%
+# Perform quasi-newton method over the same range and time the computation
+start_time=time.time()
+QN=QuasiNewton(NLL_thet_m_dc_dE, [thet, del_m, k], 0.01, 1e-10)
+# Print the results
+print('Minimum NLL:',QN[0],'\n','Optimum theta:', QN[1][0],
+      '\n','Optimum m',QN[1][1],
+      '\n', 'Optimum dcs_dE', QN[1][2])
+print('Quasi-Newton time=', time.time()-start_time)
+#%%
+# Input the energy-intercept of the cross-section plot as a parameter 
+# to optimise
+def NLL_thet_m_dc_dE_int(thet,m,dc_dE,cept):
+    return NLL(theta_23=thet,m_23=m,dcs_dE=dc_dE,intcpt=cept)
+start_time=time.time()
+# Define the ranges over which to search
+thet = np.linspace(0.67, 0.73, 100)
+del_m = np.linspace(2.7e-3, 2.9e-3, 100)
+k = np.linspace(1.3, 1.6, 100)
+cept=np.linspace(0.5,2,100)
+# Perform smulated annealing on this 4D NLL
+MC=MonteCarlo(NLL_thet_m_dc_dE_int, [thet, del_m, k,cept], 100, 10, .01)
+print('Minimum NLL:',MC[1],
+      '\n', 'Optimum theta:',MC[0][0],
+      '\n', 'Optimum m',MC[0][1],
+      '\n', 'Optimum dcs_dE', MC[0][2],
+      '\n', 'Optimum intercept:',MC[0][3])
+print('MonteCarlo time=', time.time()-start_time)
+#%%
+# Method to find the diagonal elements of the weight matrix
+# Redefine ranges with desired point in centre to aid derivative finding
+thet = np.linspace(0.688-0.01, 0.688+0.01, 101)
+del_m = np.linspace(2.83e-3-1e-4, 2.83e-3+1e-4, 101)
+k = np.linspace(1.54-0.1, 1.54+0.1, 101)
+cept=np.linspace(0.5,2,101)
+# Evaluate the second derivatives over these ranges
+d2f=second_derivs(NLL_thet_m_dc_dE_int,[thet,del_m,k,cept])[1]
+# Take the inverse of the second derivatives (errors) at optimum parameter values
+# which lie in the middle of the ranges
+errors=[np.sqrt(1/a[50]) for a in d2f]
+# Print the results
+print('Theta error:', errors[0],'\n',
+      'del_m error:',errors[1],'\n',
+      'dcs_dE error:',errors[2],'\n',
+      'Intercept error:',errors[3])
