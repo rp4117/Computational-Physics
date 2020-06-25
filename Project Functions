@@ -1,0 +1,341 @@
+# Import relevant packages
+import numpy as np
+import pandas as pd
+from scipy.interpolate import interp1d
+import random
+# Read in data using pandas and redefine as lists for ease of handling
+df = pd.read_csv('data.csv')
+Data=list(df['One'])
+sim_rates=list(df['Two'])
+# Define the energy bins
+E=np.arange(0.025,10.025,0.05)
+
+# Define survival probability as given in report
+def P(theta_23=np.pi/4, m_23=2.4e-3, E=E):
+    return 1-((np.sin(2*theta_23))**2)*(np.sin((1.267*295*m_23)/E))**2
+
+# Apply probability to simulated, unoscillated rate based on the parameters
+# Set the default gradient and intercept of cross-section to None so not
+# Included in initial analysis
+def lambd(theta_23=np.pi/4, m_23=2.4e-3, dcs_dE=None,intcpt=None):
+    # If cross-sec is included, it must by definition increase with energy
+    if dcs_dE==0:
+        raise Exception("Cross-sec must increase with energy if included")
+    # Set up initial analysis with no cross-sec
+    if dcs_dE==None:
+        return P(theta_23, m_23, E)*np.array(sim_rates)
+    # Set up 3D analysis with gradient of cross-sec only
+    elif dcs_dE!=None and intcpt==None:
+        return P(theta_23, m_23, E)*(np.array(sim_rates)*dcs_dE*np.arange(0.025, 10.025, 0.05))
+    # Set up 4D analysis including cross-sec intercept
+    else:
+        return P(theta_23, m_23, E)*(intcpt+np.array(sim_rates)*dcs_dE*np.arange(0.025, 10.025, 0.05))
+
+# Define NLL as in report
+def NLL(data=Data, theta_23=np.pi/4, m_23=2.4e-3, dcs_dE=None, intcpt=None):
+    sums = 0.0
+    rate = lambd(theta_23, m_23, dcs_dE, intcpt)
+    for i in range(len(data)):
+        # Ensure the logarithm is defined (no 0's)
+        if data[i] != 0:
+            sums += rate[i]-data[i]+data[i]*np.log(data[i]/rate[i])
+        # If the data bin has no events, only add lambda from NLL equation
+        # as k and log are zero
+        if data[i] == 0:
+            sums += rate[i]
+    return sums
+
+# Define parabolic minimiser
+def para_min(func,x_in,accuracy):
+    # Initialise three starting points as first last and middle of range
+    x_mins=[x_in[0],x_in[round(len(x_in)/2)],x_in[-1]]
+    y_mins=[func(x_mins[0]),func(x_mins[1]),func(x_mins[2])]
+    x=[x_mins[0],x_mins[-1]]
+    # Stop iterations when the difference in x is smaller then the accuracy
+    while abs(x[-2]-x[-1])>accuracy:
+        # Find Lagrangian fourth point as in write up use of list comprehension
+        # did not save space
+        minx_=0.5*((x_mins[2]**2-x_mins[1]**2)*func(x_mins[0])+
+                   (x_mins[0]**2-x_mins[2]**2)*func(x_mins[1])+
+                   (x_mins[1]**2-x_mins[0]**2)*func(x_mins[2]))/((x_mins[2]-x_mins[1])
+                   *func(x_mins[0])+
+                    (x_mins[0]-x_mins[2])*func(x_mins[1])+
+                    (x_mins[1]-x_mins[0])*func(x_mins[2]))
+        x.append(minx_)
+        x_mins.append(minx_)
+        y_mins.append(func(minx_))
+        # Remove the point with the largest function value
+        x_mins.remove(x_mins[y_mins.index(max(y_mins))])
+        y_mins.remove(max(y_mins))
+    # Return the parabolic fit from the last three points for error analysis
+    def fit(z):
+        f=0.0
+        # Perform sum od the three quadratic terms in Lagrange polynomial P2
+        for i in range(len(x_mins)):
+            x_s=1
+            for j in range(len(x_mins)):
+                if j != i:
+                    x_s*=(z-x_mins[j])/(x_mins[i]-x_mins[j])
+            f+=x_s*y_mins[i]
+        return f
+    # Find the a,c, and c coefficient of the quadratic fit
+    # using numpy's matrix solver
+    coeffs=[[0 for i in range(3)] for i in range(3)]
+    # Form the matrix
+    for i in range(3):
+        coeffs[i][0]=x_mins[i]**2
+        coeffs[i][1]=x_mins[i]
+        coeffs[i][2]=1
+    abc=np.linalg.solve(coeffs,[func(x_mins[i]) for i in range(3)])
+    # Ensure minimum, not maximum found
+    if abc[0]<0:
+        raise Exception("Maximum has been found")
+    # Find the minimum + 0.5 point from curvature as std=sqrt(0.5/a)
+    std=np.sqrt(0.5/abs(abc[0]))
+    index=y_mins.index(min(y_mins))
+    return [min(y_mins),x_mins[index],fit,std]
+
+# Start the parabolic minimiser at 100 random locations in the range to check 
+# it does not get stuck in a local minimum
+def check_global(func,x_,accuracy):
+    x_ranges=[]
+    # Define the 100 random ranges to search over
+    for i in range(100):
+        x_ranges.append(np.linspace(x_[np.random.randint(0,round(len(x_)/2))],
+                                       x_[np.random.randint(round(len(x_)/2),len(x_)-1)],100))
+    # Initialise relevant lists
+    all_mins=[]
+    all_three_points=[]
+    mins=[]
+    # Run parabolic minimiser 100 times with random starting points
+    for i in range(100):
+        all_mins.append(para_min(func,x_ranges[i],accuracy)[0])
+        all_three_points.append(para_min(func,x_ranges[i],accuracy))
+    mins.append(all_three_points[all_mins.index(min(all_mins))][0])
+    # If this minimum is lower than the one to be used, need to reduce range 
+    # around minimum
+    if para_min(func,x_,accuracy)[0]>mins[0] + accuracy:
+        raise Exception("Reduce range")
+    return min(mins)
+# Define function to find the standard deviation of a minimum from the 
+# minimum + 0.5 function point
+def std(func,x_min,x):
+    # Define function value at minimum
+    f_min=func(x_min)
+    # Split the function above minimum including 5000 points
+    x_above=np.linspace(x_min,x[-1],5000)
+    f_above=[func(x_above[i]) for i in range(len(x_above))]
+    # Sort the points based on the function values to allow for interpolation
+    x_above=[x for _,x in sorted(zip(f_above,x_above))]
+    f_above=sorted(f_above)
+    # Repeat by splitting the function below the minimum
+    x_below=np.linspace(x[0],x_min,5000)
+    f_below=[func(x_below[i]) for i in range(len(x_below))]
+    x_below=[x for _,x in sorted(zip(f_below,x_below))]
+    f_below=sorted(f_below)
+    # Interpolate each section to find the minimum + 0.5 point using
+    # a quadratic approximation between each point
+    x_std=[]
+    interp1=interp1d(f_above,x_above,kind='quadratic')
+    x_std.append(interp1(f_min+0.5))
+    interp2=interp1d(f_below,x_below,kind='quadratic')
+    x_std.append(interp2(f_min+0.5))
+    # Return the points found and the +ve and -ve error ranges
+    return x_std,abs(x_std[1]-x_min),abs(x_min-x_std[0])
+
+# Define the Univariate minimiser function
+def Univar(func,x,y,accuracy):
+    # Initialise lists with starting points to ensure accuracy is not
+    # immediately met
+    func_mins=[0,1e5]
+    y_1=[0,accuracy+1]
+    # Append the desired initial guess in the y-dimension
+    y_1.append(y[0])
+    x_1=[0,accuracy+1]
+    x_errors=[]
+    y_errors=[]
+    # Define the radius of accuracy at which the minimiser stops
+    while np.sqrt((x_1[-1]-x_1[-2])**2+(y_1[-1]-y_1[-2])**2)>=accuracy:
+        # Reduce function to one dimension and set the value in the other
+        # dimension as the first point
+        def func_x(x):
+            return func(x,y_1[-1])
+        # Run parabolic minimiser in this dimension
+        x_2=para_min(func_x,x,accuracy)[1]
+        x_1.append(x_2)
+        # Find the standard deviation in this dimension 
+        x_errors.append(para_min(func_x,x,accuracy)[3])
+        # Repeat in other dimension
+        def func_y(y):
+            return func(x_1[-1],y)
+        y_2=para_min(func_y,y,accuracy)[1]
+        y_1.append(y_2)
+        y_errors.append(para_min(func_y,y,accuracy)[3])
+        func_mins.append(func(x_1[-1],y_1[-1]))
+    # Return the x-y values found, the function minimum and errors
+    return x_1[-1],y_1[-1],func_mins[-1],x_errors[-1],y_errors[-1],x_1[2:],y_1[2:]
+
+# Function to find the gradient of a function
+def del_deriv(func, variables):
+    # Define a function to find the points in a list for the finite difference
+    # scheme
+    def change_vars(v, n, j, k):
+        v_new = [0 for i in range(len(v))]
+        for i in range(len(v)):
+            # Pick the dimension, n, to update
+            if i == n:
+                # Update this to the jth element in this dimension
+                v_new[i] = v[i][j]
+            else:
+                # Define the value to retain in other dimensions
+                v_new[i] = v[i][k]
+        return v_new
+    # Find dx,dy etc and inialise
+    d = [variables[j][-1]-variables[j][-2] for j in range(len(variables))]
+    df = [[0 for i in range(len(variables[0]))] for i in range(len(variables))]
+    for j in range(len(variables)):
+        for i in range(1, len(variables[0])-1):
+            
+            # Central difference scheme
+            df[j][i] = (func(*change_vars(variables, j, i+1, i)) -
+                        func(*change_vars(variables, j, i-1, i)))/(2*d[j])
+            # Define the gradient at the first point
+            df[j][0] = (func(*change_vars(variables, j, 1, 0)) -
+                        func(*change_vars(variables, j, 0, 0)))/d[j]
+            # Define the gradient at the last point
+            df[j][-1] = (func(*change_vars(variables, j, -1, -1)) -
+                         func(*change_vars(variables, j, -2, -1)))/d[j]
+    return df, np.array([df[j][0] for j in range(len(variables))])
+
+# Gradient method function which takes initial guesses and step size
+def grad_meth(func,variables,accuracy,alpha_init):
+    # Initialise list of function
+    funcs=[]
+    variables=np.array(variables)
+    err=accuracy+1
+    # Stop when the function reduces by less than the accuracy
+    while np.linalg.norm(err)>accuracy:
+        old_vars=variables
+        # Initialise range of variables in order to find derivative
+        ranges=[np.linspace(variables[i],variables[i]+1,15) for i in range(len(variables))]
+        f_new=func(*variables)+1
+        alpha=alpha_init
+        # Perform a line search to find the optimum step size starting at 
+        # alpha_init
+        while f_new-func(*variables)>alpha*np.linalg.norm(del_deriv(func,ranges)[1]):
+            alpha=0.5*alpha
+            var=variables-alpha*del_deriv(func,ranges)[1]
+            f_new=func(*var)
+        # Update points as equation in write up
+        variables=variables-alpha*del_deriv(func,ranges)[1]
+        funcs.append(func(*variables))
+        # Find difference of old and new function values
+        err=abs(func(*variables)-func(*old_vars))
+        # Stop if the function value gets stuck in a minimum for too long
+        if 0<max(funcs[-5:])-min(funcs[-5:])<1e-10*np.linalg.norm(del_deriv(func,ranges)[1]):
+            raise Exception("Warning: stuck in minimum at f=", funcs[-1])
+    return func(*variables),variables
+
+# Probability of accepting second point in simulated annealing
+def prob(E1, E2, T, Kb):
+    if E2-E1 <= 0:
+        return 1
+    if E2-E1 > 0:
+        # Define 'Kb' based on function
+        return np.exp(-(E2-E1)/(Kb*T))
+    
+# Function to perform Simulated annealing
+def MonteCarlo(func, variables, T, iterations, Kb):
+    # Initialise relevant lists
+    func_mins = []
+    mins=[]
+    k = 0
+    # Generate random points in dimensions' ranges
+    points=[random.uniform(variables[i][0],variables[i][-1]) for i in range(len(variables))]
+    # Stop when temperature low
+    while T > .00001:
+        # Count iterationd for VCF method        
+        k += 1
+        # Generate new random points as Gaussian distrbn around old points
+        # a large number of times
+        for i in range(iterations):
+            points_new=[random.gauss(points[i], np.sqrt(T)*(variables[i][-1]-
+                                     variables[i][0])/100) for i in range(len(variables))]
+            # Accept new point based on probability
+            if prob(func(*points), func(*points_new), T, Kb) >= random.random():
+                points=points_new
+            func_mins.append(func(*points))
+            mins.append(points)
+        # Define VCF cooling scheme
+        n=len(variables)
+        T=T*(1+1/(np.sqrt(k*(n+1)+n)))**-1
+    # Return minimum function value found and corresponding points
+    return(mins[-1], (func_mins[-1]))
+    
+# Quasi newton method
+# Function to find the gradient at a point
+def grad_at_point(func, points):
+    df = [0 for i in range(len(points))]
+    # Define the range of points over which to calculate the derivatives,
+    # starting at the desired point
+    range_p = [np.linspace(points[i], points[i]+1, 10)
+               for i in range(len(points))]
+    # Take the derivative at the first point
+    df = del_deriv(func, [range_p[i] for i in range(len(points))])[0]
+    return [df[i][0] for i in range(len(df))]
+
+# Define a function to perform the Quasi_Newton method
+def QuasiNewton(func, variables, accuracy, alpha):
+    # Initialise guess with mid-point of variable ranges
+    x = [np.array([variables[i][round(len(variables[i])/2)]
+                   for i in range(len(variables))])]    
+    # Initialise inverse Hessian approximation, d and gamma as in write up
+    G = [[[1, 0, 0], [0, 1, 0], [0, 0, 1]]]
+    d = []
+    gam = []
+    # Find first updated x value from equation in write up
+    x.append(np.subtract(x[-1], np.multiply(alpha,
+                                            np.dot(G[-1], grad_at_point(func, x[-1])))))
+    # Stop when function reduces by less than accuracy
+    while abs(func(*x[-1])-func(*x[-2])) > accuracy:
+        # Update d
+        d.append(np.subtract(x[-1], x[-2]))
+        # Find gamma at this point
+        gam.append(np.subtract(grad_at_point(
+            func, x[-1]), grad_at_point(func, x[-2])))
+        # Find G at this point
+        G.append(np.subtract(np.add(G[-1], np.divide(np.outer(d[-1], d[-1]),
+                                    np.dot(gam[-1], d[-1]))), np.divide(np.dot(G[-1], 
+                                          np.dot(np.outer(d[-1], d[-1]), G[-1])), np.dot(gam[-1],
+                                                np.dot(G[-1], gam[-1])))))
+        # Update x
+        x.append(x[-1]-alpha*np.dot(G[-1], grad_at_point(func, x[-1])))
+    return func(*x[-1]),x[-1]
+
+# Method to find points for finite difference scheme
+def FD1d(v,n,j,k):
+    v_new=[0 for i in range(len(v))]
+    for i in range(len(v)):
+        if i == n:
+            v_new[i]=v[i][j]
+        else:
+            v_new[i]=v[i][k]
+    return v_new 
+
+# Method to find second derivatives
+def second_derivs(func,variables):
+    # Initialise dx,dy etc and lists of derivatives
+    d_=[variables[j][-1]-variables[j][-2] for j in range(len(variables))]
+    d2f=[[0 for i in range(len(variables[0]))] for i in range(len(variables))]
+    for j in range(len(variables)):
+        for i in range(1,len(variables[0])-1):
+            # Central difference scheme for second derivatives
+            d2f[j][i]=(func(*FD1d(variables,j,i+1,i))-
+               2*func(*FD1d(variables,j,i,i))+func(*FD1d(variables,j,i-1,i)))/d_[j]**2
+            # Define second deriv at first point
+            d2f[j][0]=(func(*FD1d(variables,j,1,i))-
+               2*func(*FD1d(variables,j,0,i))+func(*FD1d(variables,j,-1,i)))/d_[j]**2
+            # Define second deriv at last point
+            d2f[j][-1]=(func(*FD1d(variables,j,-1,i))-
+               2*func(*FD1d(variables,j,-2,i))+func(*FD1d(variables,j,-3,i)))/d_[j]**2
+    return df,d2f
