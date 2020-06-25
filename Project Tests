@@ -1,0 +1,70 @@
+from Project_functions import para_min, Univar, grad_meth, MonteCarlo, \
+QuasiNewton
+import numpy as np
+import matplotlib.pyplot as plt
+import time
+# Define the Rastrigin test function in 1,2 and 3 dimensions
+def Rast1D(x):
+    return 10+x**2-10*np.cos(2*np.pi*x)
+def Rast2D(x,y):
+    return 20+x**2-10*np.cos(2*np.pi*x)+y**2-10*np.cos(2*np.pi*y)
+def Rast3D(x,y,z):
+    return 30+x**2-10*np.cos(2*np.pi*x)+y**2-10*np.cos(2*np.pi*y)+z**2-10*np.cos(2*np.pi*z)
+#%%
+# Test the parabolic minimiser on the 1D rastrigin function
+xx=np.linspace(-1.5,2.5,100)
+mins=para_min(Rast1D,xx,0.001)
+# Plot the function
+plt.plot(xx,Rast1D(xx),label='Test function')
+# Plot the minimum
+plt.plot(mins[1],mins[0],'ko',label="Minimum")
+# Plot the parabolic fit to the function
+f=mins[2]
+plt.plot(xx,[f(xx[i]) for i in range(len(xx))],linestyle='--', label="Fit")
+plt.legend()
+plt.xlabel("x")
+plt.ylabel("f(x)")
+plt.title("Test function for parabolic minimiser")
+print('y_min=',para_min(Rast1D,xx,.000001)[0],'x_min=',para_min(Rast1D,xx,0.000001)[1])
+#%%
+# Test the Univariate method on the 2D Rastrigin function over ranges [-1,1]
+xu=np.linspace(-1,1,100)
+yu=np.linspace(-1,1,100)
+start_time=time.time()
+# Define the accuracy as 1e-8
+UT=Univar(Rast2D,xu,yu,.00000001)
+print('Time:',time.time()-start_time)
+print('Rastrigin results:','\n',
+      'x=',UT[0],'y=',UT[1], 'Minimum=',UT[2])
+#%%
+# Test Univariate on a simpler function to ensure validity
+def UniTest(x,y):
+    return x**2+(y-1.2)**2+1
+UT=Univar(UniTest,xu,yu,.00000001)
+print('Spherical function results:','\n',
+      'x=',UT[0],'y=',UT[1], 'Minimum=',UT[2])
+#%%
+# Test the gradient method on Rosenbrock function
+start_time=time.time()
+GT=grad_meth(Rast2D,[.01,.01],1e-10,.00001)
+print('Time:',time.time()-start_time)
+print('Minimum=', GT[0], 'at', GT[1])
+#%%
+# Test the Monte Carlo (MC) method in 3D on the Rastrigin function
+start_time=time.time()
+# Define search symmetric search ranges
+x = np.linspace(-.5, .5, 100)
+y = np.linspace(-.5, .5, 100)
+z = np.linspace(-.5, .5, 100)
+MC=MonteCarlo(Rast3D, [x,y,z], 100, 100, 1e-8)
+print('Min of test func from MC=', MC[1], 'at', MC[0])
+print('Run time=', time.time()-start_time)
+#%%
+# Test the quasi-newton method on Styblinski-Tang function
+x=np.linspace(-5,5,100)
+y=np.linspace(-5,5,100)
+z=np.linspace(-5,5,100)
+start_time=time.time()
+QN=QuasiNewton(Rast3D,[x,y,z],0.000001, 0.0000001)
+print('Min:',QN[0],'at',QN[1])
+print('Time:', time.time()-start_time)
